@@ -205,20 +205,33 @@ jobs:
         run: |
           set +e
           current_run="${{ github.run_id }}"
+          cutoff_epoch=$(date -d '24 hours ago' +%s)
           runs=$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow="hus-renew.yml" \
             --limit=100 \
-            --json databaseId \
-            --jq '.[].databaseId' 2>/dev/null)
+            --json databaseId,createdAt,status,conclusion \
+            --jq '.[] | [.databaseId, .createdAt, .status, (.conclusion // "")] | @tsv' 2>/dev/null)
           if [ -z "$runs" ]; then
             echo "没有找到可清理的运行记录"
             exit 0
           fi
-          for run_id in $runs; do
-            if [ "$run_id" != "$current_run" ]; then
-              echo "删除运行记录: $run_id"
-              gh run delete "$run_id" --repo "$GITHUB_REPOSITORY" || true
+          while IFS=$'\t' read -r run_id created_at status conclusion; do
+            [ -z "$run_id" ] && continue
+            if [ "$run_id" = "$current_run" ]; then
+              echo "保留当前运行记录: $run_id"
+              continue
             fi
-          done
-          echo "已保留当前运行记录: $current_run"
+            created_epoch=$(date -d "$created_at" +%s 2>/dev/null || echo 0)
+            if [ "$created_epoch" -ge "$cutoff_epoch" ]; then
+              echo "保留 24 小时内记录: $run_id ($created_at)"
+              continue
+            fi
+            if [ "$status" != "completed" ]; then
+              echo "保留未完成记录: $run_id (status=$status)"
+              continue
+            fi
+            echo "删除超过 24 小时的已完成记录: $run_id (created=$created_at, conclusion=$conclusion)"
+            gh run delete "$run_id" --repo "$GITHUB_REPOSITORY" || true
+          done <<< "$runs"
+          echo "清理完成：保留最近 24 小时记录及所有未完成记录"
