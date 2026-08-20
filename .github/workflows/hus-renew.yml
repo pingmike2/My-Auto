@@ -100,6 +100,7 @@ jobs:
             install -y xvfb chromium ffmpeg unzip curl wget jq ca-certificates
           pip install --upgrade pip
           pip install -r requirements.txt -q
+          python3 -c 'import speech_recognition, pydub, audioop; print("语音依赖导入成功")'
 
       - name: 启用 WARP
         uses: fscarmen/warp-on-actions@v1.3
