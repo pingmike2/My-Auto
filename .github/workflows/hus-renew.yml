@@ -57,6 +57,27 @@ jobs:
           path: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
           fetch-depth: 1
 
+      - name: 校验 HUS_BATCH
+        env:
+          HUS_BATCH: ${{ secrets.HUS_BATCH }}
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          value = os.environ.get("HUS_BATCH", "").strip()
+          if not value:
+              raise SystemExit("HUS_BATCH 未设置或为空")
+          accounts = [x.strip() for x in value.replace("\\n", ";").split(";") if x.strip()]
+          if not accounts:
+              raise SystemExit("HUS_BATCH 没有有效账号")
+          for index, account in enumerate(accounts, 1):
+              fields = [x.strip() for x in account.split(",")]
+              if len(fields) < 6:
+                  raise SystemExit(f"HUS_BATCH 第 {index} 个账号字段不足：需要 phone,bot_token,chat_id,api_id,api_hash,session")
+              if any(not fields[i] for i in range(6)):
+                  raise SystemExit(f"HUS_BATCH 第 {index} 个账号存在空字段")
+          print(f"HUS_BATCH 预检通过：{len(accounts)} 个账号，凭据内容已隐藏")
+          PY
+
       - name: 设置 Python
         uses: actions/setup-python@v5
         with:
