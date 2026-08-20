@@ -105,7 +105,7 @@ jobs:
       - name: 启用 WARP
         uses: fscarmen/warp-on-actions@v1.3
         with:
-          stack: dual
+          stack: ipv4
           mode: client
 
       - name: 安装代理
@@ -135,7 +135,13 @@ jobs:
         working-directory: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
         run: |
           set -o pipefail
-          python3 -u hus-renew.py 2>&1 | tee hus-renew.log
+          python3 -u hus-renew.py 2>&1 | tee hus-renew.log &
+          renew_pid=$!
+          while kill -0 "$renew_pid" 2>/dev/null; do
+            echo "[HEARTBEAT] 执行续期仍在运行: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            sleep 15
+          done
+          wait "$renew_pid"
 
       - name: 上传截图
         if: always()
