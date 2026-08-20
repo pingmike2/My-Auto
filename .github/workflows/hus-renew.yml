@@ -83,15 +83,13 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: 安装系统依赖
+      - name: 安装依赖
+        working-directory: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
         run: |
-          sudo apt-get update -o Acquire::http::Timeout=30
-          sudo apt-get install -y --no-install-recommends xvfb ffmpeg unzip curl wget jq ca-certificates chromium
-
-      - name: 安装 Python 依赖
-        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb chromium ffmpeg unzip curl wget jq ca-certificates
           pip install --upgrade pip
-          pip install -r ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/requirements.txt
+          pip install -r requirements.txt -q
 
       - name: 启用 WARP
         uses: fscarmen/warp-on-actions@v1.3
