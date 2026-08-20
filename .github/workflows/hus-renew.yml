@@ -85,11 +85,19 @@ jobs:
           cache: pip
           cache-dependency-path: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/requirements.txt
 
+      - name: 缓存 Chromium apt 包
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/hus-apt
+          key: apt-chromium-${{ runner.os }}-${{ runner.arch }}-v1
+
       - name: 安装依赖
         working-directory: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
         run: |
+          mkdir -p "$HOME/.cache/hus-apt/partial"
           sudo apt-get update
-          sudo apt-get install -y xvfb chromium ffmpeg unzip curl wget jq ca-certificates
+          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/hus-apt" \
+            install -y xvfb chromium ffmpeg unzip curl wget jq ca-certificates
           pip install --upgrade pip
           pip install -r requirements.txt -q
 
