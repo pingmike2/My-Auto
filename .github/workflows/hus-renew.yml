@@ -23,7 +23,7 @@ jobs:
       # hus.co.id 账号，多个用分号分隔：
       #   phone,tg_bot_token,tg_chat_id,tg_api_id,tg_api_hash,tg_session
       #   TG 凭据（后三个字段）由每账号独立提供
-      HUS_BATCH: ${{ secrets.HAX_BATCH }}
+      HUS_BATCH: ${{ secrets.HUS_BATCH }}
       # 代理
       PROXY_CONTENT: ${{ secrets.HUS_HY2_PROXY_URL }}
       SOCKS_PORT: ${{ secrets.SOCKS_PORT || '10808' }}
