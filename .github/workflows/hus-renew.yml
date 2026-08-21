@@ -29,7 +29,7 @@ jobs:
       SOCKS_PORT: ${{ secrets.SOCKS_PORT || '10808' }}
       # 可选
       SCREENSHOT_DIR: screenshots
-      DEBUG_FLAG: "1"
+      DEBUG_FLAG: "0"
       # 续期重试次数（外层）
       MAX_RENEW_RETRIES: "0"
       # IP 被封时切换 WARP 重试次数（内层）
@@ -205,33 +205,34 @@ jobs:
         run: |
           set +e
           current_run="${{ github.run_id }}"
-          cutoff_epoch=$(date -d '24 hours ago' +%s)
+          # 拉全量记录，按创建时间倒序（最新在前）
           runs=$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow="hus-renew.yml" \
             --limit=100 \
             --json databaseId,createdAt,status,conclusion \
-            --jq '.[] | [.databaseId, .createdAt, .status, (.conclusion // "")] | @tsv' 2>/dev/null)
+            --jq 'sort_by(.createdAt) | reverse | .[] | [.databaseId, .createdAt, .status, (.conclusion // "")] | @tsv' 2>/dev/null)
           if [ -z "$runs" ]; then
             echo "没有找到可清理的运行记录"
             exit 0
           fi
+          kept_history=false
           while IFS=$'\t' read -r run_id created_at status conclusion; do
             [ -z "$run_id" ] && continue
             if [ "$run_id" = "$current_run" ]; then
               echo "保留当前运行记录: $run_id"
               continue
             fi
-            created_epoch=$(date -d "$created_at" +%s 2>/dev/null || echo 0)
-            if [ "$created_epoch" -ge "$cutoff_epoch" ]; then
-              echo "保留 24 小时内记录: $run_id ($created_at)"
-              continue
-            fi
             if [ "$status" != "completed" ]; then
               echo "保留未完成记录: $run_id (status=$status)"
               continue
             fi
-            echo "删除超过 24 小时的已完成记录: $run_id (created=$created_at, conclusion=$conclusion)"
+            if [ "$kept_history" = false ]; then
+              echo "保留最新一条历史记录: $run_id ($created_at)"
+              kept_history=true
+              continue
+            fi
+            echo "删除多余历史记录: $run_id (created=$created_at, conclusion=$conclusion)"
             gh run delete "$run_id" --repo "$GITHUB_REPOSITORY" || true
           done <<< "$runs"
-          echo "清理完成：保留最近 24 小时记录及所有未完成记录"
+          echo "清理完成：仅保留当前运行 + 最新一条历史记录"
