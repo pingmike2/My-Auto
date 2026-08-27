@@ -2,13 +2,13 @@ name: 🌊 Token Harbor Register
 
 on:
   schedule:
-    - cron: '23 3 * * *'
+    - cron: '23 */2 * * *'
   workflow_dispatch:
     inputs:
       accounts:
-        description: "注册账号数(测试用1)"
+        description: "注册账号数(测试用10)"
         required: false
-        default: "1"
+        default: "10"
 
 permissions:
   contents: write
