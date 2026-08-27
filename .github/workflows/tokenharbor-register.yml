@@ -98,21 +98,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: 追加 apikey.txt + warp_ips.json 回私库
+      - name: 追加 apikey.txt 回私库
         if: always()
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          # 此步在私库检出目录中执行; register.py 已把 key/IP 追加写进文件
-          if [ ! -s apikey.txt ]; then echo "无新 key"; else sort -u apikey.txt -o apikey.txt; fi
+          # 此步在私库检出目录中执行; register.py 已把 key 追加写进文件
+          if [ ! -s apikey.txt ]; then echo "无新 key"; exit 0; fi
+          sort -u apikey.txt -o apikey.txt
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add apikey.txt warp_ips.json
-          git diff --cached --quiet && { echo "无变化"; exit 0; }
-          git commit -m "chore: append apikey+warp-ips $(date +%Y-%m-%d)"
+          git add apikey.txt
+          git diff --cached --quiet && { echo "apikey.txt 无变化"; exit 0; }
+          git commit -m "chore: append apikey $(date +%Y-%m-%d)"
           git pull --rebase origin main || true
           git push origin HEAD:main
-          [ -s apikey.txt ] && echo "✅ 已追加, 当前共 $(wc -l < apikey.txt) 个 key (内容已隐藏)"
-          [ -f warp_ips.json ] && echo "✅ warp_ips.json 已更新 (共 $(python3 -c "import json;print(len(json.load(open('warp_ips.json'))))" 2>/dev/null || '?') 个 IP)"
+          echo "✅ 已追加, 当前共 $(wc -l < apikey.txt) 个 key (内容已隐藏)"
 
       - name: 🧹 清理旧的工作流运行记录
         if: always()
