@@ -2,7 +2,8 @@ name: 🌊 Token Harbor Register
 
 on:
   schedule:
-    - cron: '23 */2 * * *'
+    # 每2小时 :43分(UTC), 避开整点高峰(GitHub schedule高峰会延迟/丢弃)
+    - cron: '43 */2 * * *'
   workflow_dispatch:
     inputs:
       accounts:
