@@ -89,8 +89,9 @@ jobs:
           PYTHONUNBUFFERED: 1
           TH_ACCOUNTS: ${{ inputs.accounts || '10' }}
 
-      - name: 上传截图
-        if: always()
+      - name: 失败时上传截图
+        # 成功不上传(截图含 apikey 防泄露), 仅失败才上传供排障
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: screenshots
