@@ -26,7 +26,7 @@ jobs:
   register:
     name: 注册+取key
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 350
 
     steps:
       - name: 检出 My-Auto
