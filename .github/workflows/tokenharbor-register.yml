@@ -1,0 +1,120 @@
+name: 🌊 Token Harbor Register
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+    inputs:
+      accounts:
+        description: "注册账号数(测试用1)"
+        required: false
+        default: "1"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: TokenHarborRegister
+  cancel-in-progress: false
+
+env:
+  PRIVATE_REPO: pingmike2/tokenharbor2api
+  PROJECT_DIR: tokenharbor2api
+
+jobs:
+  register:
+    name: 注册+取key
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: 检出 My-Auto
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 检出私库 tokenharbor2api
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PRIVATE_REPO }}
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          ref: main
+          path: ${{ env.PROJECT_DIR }}
+          fetch-depth: 1
+
+      - name: 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb unzip wget ca-certificates \
+            fonts-liberation libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 \
+            libc6 libcairo2 libcups2t64 libdbus-1-3 libexpat1 libfontconfig1 \
+            libgbm1 libgcc-s1 libglib2.0-0t64 libgtk-3-0t64 libnspr4 libnss3 \
+            libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 \
+            libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 \
+            libxi6 libxrandr2 libxrender1 libxss1 libxtst6 xdg-utils
+
+      - name: 安装 Google Chrome
+        run: |
+          wget -q -O /tmp/google-chrome.deb \
+            https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo dpkg -i /tmp/google-chrome.deb || sudo apt-get install -fy
+
+      - name: 安装 Python 依赖
+        run: pip install DrissionPage==4.1.0.18 requests
+
+      - name: 启用 WARP
+        uses: fscarmen/warp-on-actions@v1.3
+        with:
+          stack: dual
+          mode: client
+
+      - name: 修复 DNS
+        run: |
+          sudo systemctl stop systemd-resolved 2>/dev/null || true
+          sudo systemctl disable systemd-resolved 2>/dev/null || true
+          sudo rm -f /etc/resolv.conf
+          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+
+      - name: 执行注册
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          Xvfb :99 -screen 0 1280x900x24 &
+          sleep 2
+          export DISPLAY=:99
+          python register.py
+        env:
+          PYTHONUNBUFFERED: 1
+          TH_ACCOUNTS: ${{ inputs.accounts || '1' }}
+
+      - name: 上传截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: ${{ env.PROJECT_DIR }}/output/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: 追加 apikey.txt 到本仓库根目录
+        if: always()
+        run: |
+          NEWKEYS="${{ env.PROJECT_DIR }}/apikey.txt"
+          # 拉最新 main, 读现有 key 集合
+          git fetch origin main
+          git reset --hard origin/main
+          touch apikey.txt
+          # 合并去重追加 (旧key保留 + 新key)
+          if [ -s "$NEWKEYS" ]; then
+            cat apikey.txt "$NEWKEYS" | grep -v '^$' | sort -u > /tmp/merged.txt
+            mv /tmp/merged.txt apikey.txt
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add apikey.txt
+          git diff --cached --quiet && { echo "无新增 key"; exit 0; }
+          git commit -m "chore: append tokenharbor keys $(date +%Y-%m-%d)"
+          git pull --rebase origin main || true
+          git push origin HEAD:main
