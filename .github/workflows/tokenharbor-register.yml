@@ -87,7 +87,7 @@ jobs:
           python register.py
         env:
           PYTHONUNBUFFERED: 1
-          TH_ACCOUNTS: ${{ inputs.accounts || '1' }}
+          TH_ACCOUNTS: ${{ inputs.accounts || '10' }}
 
       - name: 上传截图
         if: always()
