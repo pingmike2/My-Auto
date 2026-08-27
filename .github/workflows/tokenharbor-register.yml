@@ -98,23 +98,19 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: 追加 apikey.txt 到本仓库根目录
+      - name: 追加 apikey.txt 回私库 tokenharbor2api
         if: always()
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          NEWKEYS="${{ env.PROJECT_DIR }}/apikey.txt"
-          # 拉最新 main, 读现有 key 集合
-          git fetch origin main
-          git reset --hard origin/main
-          touch apikey.txt
-          # 合并去重追加 (旧key保留 + 新key)
-          if [ -s "$NEWKEYS" ]; then
-            cat apikey.txt "$NEWKEYS" | grep -v '^$' | sort -u > /tmp/merged.txt
-            mv /tmp/merged.txt apikey.txt
-          fi
+          # 此步在私库检出目录中执行; register.py 已把 key 追加写进 apikey.txt
+          if [ ! -s apikey.txt ]; then echo "无新 key"; exit 0; fi
+          sort -u apikey.txt -o apikey.txt
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add apikey.txt
-          git diff --cached --quiet && { echo "无新增 key"; exit 0; }
-          git commit -m "chore: append tokenharbor keys $(date +%Y-%m-%d)"
+          git diff --cached --quiet && { echo "apikey.txt 无变化"; exit 0; }
+          git commit -m "chore: append apikey $(date +%Y-%m-%d)"
           git pull --rebase origin main || true
           git push origin HEAD:main
+          echo "--- 当前 apikey.txt ---"
+          cat apikey.txt
