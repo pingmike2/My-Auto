@@ -98,21 +98,31 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: 追加 apikey.txt 回私库
+      - name: 追加 apikey.txt + accounts.txt 回私库
         if: always()
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          # 此步在私库检出目录中执行; register.py 已把 key 追加写进文件
-          if [ ! -s apikey.txt ]; then echo "无新 key"; exit 0; fi
-          sort -u apikey.txt -o apikey.txt
+          # register.py 已追加写入 apikey.txt 和 accounts.txt
+          # 防冲突: 先备份本次新增内容, reset 到远端最新, 再合并追加
+          cp -f apikey.txt  /tmp/new_apikey.txt    2>/dev/null || true
+          cp -f accounts.txt /tmp/new_accounts.txt 2>/dev/null || true
+          git fetch origin main
+          git reset --hard origin/main
+          for f in apikey.txt accounts.txt; do
+            touch "$f"
+            if [ -s "/tmp/new_$f" ]; then
+              cat "$f" "/tmp/new_$f" | grep -v '^$' | sort -u -o "$f"
+            fi
+          done
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add apikey.txt
-          git diff --cached --quiet && { echo "apikey.txt 无变化"; exit 0; }
-          git commit -m "chore: append apikey $(date +%Y-%m-%d)"
+          git add apikey.txt accounts.txt
+          git diff --cached --quiet && { echo "无变化"; exit 0; }
+          git commit -m "chore: append keys/accounts $(date +%Y-%m-%d)"
           git pull --rebase origin main || true
           git push origin HEAD:main
-          echo "✅ 已追加, 当前共 $(wc -l < apikey.txt) 个 key (内容已隐藏)"
+          echo "✅ apikey 共 $(wc -l < apikey.txt) 个 (内容隐藏)"
+          echo "✅ accounts 共 $(wc -l < accounts.txt) 个 (内容隐藏)"
 
       - name: 🧹 清理旧的工作流运行记录
         if: always()
