@@ -112,5 +112,20 @@ jobs:
           git commit -m "chore: append apikey $(date +%Y-%m-%d)"
           git pull --rebase origin main || true
           git push origin HEAD:main
-          echo "--- 当前 apikey.txt ---"
-          cat apikey.txt
+          n=$(wc -l < apikey.txt)
+          echo "✅ 已追加, 当前共 $n 个 key (内容已隐藏)"
+
+      - name: 🧹 清理旧的工作流运行记录
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs=$(gh run list --workflow="${{ github.workflow }}" --limit=100 --json databaseId --jq '.[].databaseId')
+          count=0
+          for run_id in $runs; do
+            count=$((count + 1))
+            if [ $count -gt 1 ]; then
+              echo "删除运行记录: $run_id"
+              gh run delete $run_id || true
+            fi
+          done
