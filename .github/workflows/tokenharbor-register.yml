@@ -24,11 +24,32 @@ env:
 
 jobs:
   register:
-    name: 注册+取key
+    name: 注册+取key (批次 ${{ matrix.batch }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        # 并行批次: 每批独立 runner/WARP, 每批最多3个号(避开单runner 3 IP 池限制)
+        # 默认4批=10个号(3+3+3+1), 测试可传 accounts=1 只跑第1批
+        batch: [1, 2, 3, 4]
 
     steps:
+      - name: 计算本批账号数
+        id: calc
+        run: |
+          TOTAL=${{ inputs.accounts || '10' }}
+          BATCH=${{ matrix.batch }}
+          # 每批上限3个号
+          PER=3
+          START=$(( (BATCH - 1) * PER + 1 ))
+          END=$(( BATCH * PER ))
+          [ $END -gt $TOTAL ] && END=$TOTAL
+          COUNT=$(( END - START + 1 ))
+          [ $COUNT -lt 1 ] && COUNT=0
+          echo "total=$TOTAL batch=$BATCH start=$START end=$END count=$COUNT"
+          echo "TH_COUNT=$COUNT" >> "$GITHUB_ENV"
+          echo "BATCH=$BATCH" >> "$GITHUB_ENV"
       - name: 检出 My-Auto
         uses: actions/checkout@v4
 
@@ -79,6 +100,7 @@ jobs:
           echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8" | sudo tee /etc/resolv.conf
 
       - name: 执行注册
+        if: env.TH_COUNT > '0'
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           Xvfb :99 -screen 0 1280x900x24 &
@@ -87,7 +109,7 @@ jobs:
           python register.py
         env:
           PYTHONUNBUFFERED: 1
-          TH_ACCOUNTS: ${{ inputs.accounts || '10' }}
+          TH_ACCOUNTS: ${{ env.TH_COUNT }}
 
       - name: 失败时上传截图
         # 成功不上传(截图含 apikey 防泄露), 仅失败才上传供排障
@@ -99,33 +121,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: 追加 apikey.txt + accounts.txt 回私库
+      - name: 上传本批次 key/accounts (供 merge job 合并)
         if: always()
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          # register.py 已追加写入 apikey.txt 和 accounts.txt
-          # 防冲突: 先备份本次新增内容, reset 到远端最新, 再合并追加
-          cp -f apikey.txt  /tmp/new_apikey.txt    2>/dev/null || true
-          cp -f accounts.txt /tmp/new_accounts.txt 2>/dev/null || true
-          git fetch origin main
-          git reset --hard origin/main
-          for f in apikey.txt accounts.txt; do
-            touch "$f"
-            if [ -s "/tmp/new_$f" ]; then
-              cat "$f" "/tmp/new_$f" | grep -v '^$' | sort -u -o "$f"
-            fi
-          done
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add apikey.txt accounts.txt
-          git diff --cached --quiet && { echo "无变化"; exit 0; }
-          git commit -m "chore: append keys/accounts $(date +%Y-%m-%d)"
-          git pull --rebase origin main || true
-          git push origin HEAD:main
-          echo "✅ apikey 共 $(wc -l < apikey.txt) 个 (内容隐藏)"
-          echo "✅ accounts 共 $(wc -l < accounts.txt) 个 (内容隐藏)"
+        uses: actions/upload-artifact@v4
+        with:
+          name: batch-${{ env.BATCH }}
+          path: |
+            ${{ env.PROJECT_DIR }}/apikey.txt
+            ${{ env.PROJECT_DIR }}/accounts.txt
+          if-no-files-found: ignore
+          retention-days: 7
 
-      - name: 🧹 清理旧的工作流运行记录
+      - name: 清理旧的工作流运行记录
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -139,3 +146,41 @@ jobs:
               gh run delete $run_id || true
             fi
           done
+
+  merge:
+    name: 合并批次key回私库
+    needs: register
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出私库
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PRIVATE_REPO }}
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          ref: main
+          fetch-depth: 0
+
+      - name: 拉取所有批次产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 合并 apikey + accounts 并推送
+        run: |
+          # 各批次产物在 artifacts/ 下: batch-1/..., batch-2/...
+          for f in apikey.txt accounts.txt; do
+            touch "$f"
+            find artifacts -name "$f" -type f -exec cat {} + | grep -v '^$' | sort -u -o "$f" || true
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add apikey.txt accounts.txt
+          git diff --cached --quiet && { echo "无变化"; exit 0; }
+          git commit -m "chore: merge keys/accounts $(date +%Y-%m-%d)"
+          git pull --rebase origin main || true
+          git push origin HEAD:main
+          echo "✅ apikey 共 $(wc -l < apikey.txt) 个 (内容隐藏)"
+          echo "✅ accounts 共 $(wc -l < accounts.txt) 个 (内容隐藏)"
