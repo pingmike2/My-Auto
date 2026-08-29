@@ -150,12 +150,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
+        # 健康检查: 免鉴权 (Northflank Readiness Probe 不带 token)
+        if self.path in ("/", "/healthz", "/health"):
+            self._send_json(200, {"status": "ok"})
+            return
+
         if not self._auth_ok():
             self._send_json(401, {"error": {"message": "Unauthorized"}})
             return
-        # 健康检查: Northflank 需要 / 或 /healthz 返回 200
-        if self.path in ("/", "/healthz", "/health"):
-            self._send_json(200, {"status": "ok"})
         elif self.path.startswith("/v1/models"):
             self._send_json(200, {"object": "list", "data": [
                 {"id": "deepseek-v4-flash:free", "object": "model", "owned_by": "tokenharbor"},
