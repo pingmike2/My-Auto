@@ -322,24 +322,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         try:
             html = s.fetch_dashboard()
-            # 解析 "Free allowance 2% used" 和 "Resets in 6d 21h"
             allowance = ""
             resets = ""
-            m = re.search(r"Free allowance\s*</?[^>]*>\s*(\d+)%\s*(?:used)?", html)
-            if m:
-                allowance = m.group(1) + "% used"
-            m2 = re.search(r"Resets?\s*(?:in)?\s*</?[^>]*>\s*([\d.]+d\s*[\d.]+h)", html)
-            if m2:
-                resets = m2.group(1)
-            # 兜底: 宽松匹配
-            if not allowance:
-                m = re.search(r"(\d+)%\s*used", html)
+            # 尝试多种匹配: "Free allowance 2% used" / "2% used" / "Used 2%" / "allowance 2%"
+            patterns = [
+                r"Free\s*allowance[^%]{0,80}?(\d+(?:\.\d+)?)%\s*(?:used)?",
+                r"(\d+(?:\.\d+)?)%\s*used",
+                r"used\s*(\d+(?:\.\d+)?)%",
+                r"allowance[^%]{0,40}?(\d+(?:\.\d+)?)%",
+            ]
+            for p in patterns:
+                m = re.search(p, html, re.IGNORECASE)
                 if m:
                     allowance = m.group(1) + "% used"
-            if not resets:
-                m = re.search(r"([\d.]+d\s*[\d.]+h)", html)
-                if m:
-                    resets = m.group(1)
+                    break
+            # 重置时间: "Resets in 6d 21h" / "resets in 12d 14h" / "12d 14h"
+            m2 = re.search(r"([\d.]+d\s*[\d.]+h)", html)
+            if m2:
+                resets = m2.group(1)
             self._send_json(200, {
                 "account": s.email,
                 "free_allowance_used": allowance or "unknown",
