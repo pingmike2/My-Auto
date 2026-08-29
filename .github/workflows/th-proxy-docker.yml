@@ -14,7 +14,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: pingmike2/My-Auto/th-proxy
+  IMAGE_NAME: pingmike2/my-auto/th-proxy
 
 jobs:
   build:
