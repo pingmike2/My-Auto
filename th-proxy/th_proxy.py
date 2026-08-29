@@ -324,19 +324,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             html = s.fetch_dashboard()
             allowance = ""
             resets = ""
-            # 尝试多种匹配: "Free allowance 2% used" / "2% used" / "Used 2%" / "allowance 2%"
-            patterns = [
-                r"Free\s*allowance[^%]{0,80}?(\d+(?:\.\d+)?)%\s*(?:used)?",
-                r"(\d+(?:\.\d+)?)%\s*used",
-                r"used\s*(\d+(?:\.\d+)?)%",
-                r"allowance[^%]{0,40}?(\d+(?:\.\d+)?)%",
-            ]
-            for p in patterns:
-                m = re.search(p, html, re.IGNORECASE)
+            # Next.js RSC payload: self.__next_f.push([1,"...JSON..."])
+            # 额度可能藏在 JSON 字符串里, 先整体搜文本
+            for pat in [
+                r'"free[^"]{0,40}?"[^}]{0,120}?(\d+(?:\.\d+)?)\s*%',
+                r'allowance[^}]{0,80}?(\d+(?:\.\d+)?)\s*%',
+                r'(\d+(?:\.\d+)?)\s*%\s*(?:used|consumed)',
+                r'used[^}]{0,60}?(\d+(?:\.\d+)?)\s*%',
+            ]:
+                m = re.search(pat, html, re.IGNORECASE)
                 if m:
                     allowance = m.group(1) + "% used"
                     break
-            # 重置时间: "Resets in 6d 21h" / "resets in 12d 14h" / "12d 14h"
             m2 = re.search(r"([\d.]+d\s*[\d.]+h)", html)
             if m2:
                 resets = m2.group(1)
