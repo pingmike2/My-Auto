@@ -322,35 +322,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         try:
             html = s.fetch_dashboard()
-            # 若返回的是登录页 (无 Free 区块), 说明 session 失效, 刷新后重试一次
-            if "Free Access" not in html and "Free allowance" not in html and "free allowance" not in html:
-                print(f"[TH] {s.email[:20]} dashboard 返回非登录页(可能session失效), 刷新重试...")
-                try:
-                    s.refresh()
-                except Exception as e:
-                    print(f"[TH] 刷新失败: {e}")
-                if s.is_valid():
-                    html = s.fetch_dashboard()
+            # dashboard 是客户端渲染, 原始 HTML 可能不含 "Free Access" 文本,
+            # 所以不能据此判定 session 失效。直接用完整 HTML 解析。
 
             allowance = ""
             resets = ""
-            # 先定位 "Free Access" / "Free allowance" 区块, 再在其附近提取
+            # 先定位 "Free Access" / "Free allowance" 区块 (可能不存在, 用整个 HTML)
             free_block = ""
             for anchor in ["Free Access", "Free access", "free access", "Free allowance", "free allowance"]:
                 idx = html.find(anchor)
                 if idx >= 0:
                     free_block = html[idx:idx+3000]
                     break
+            if not free_block:
+                free_block = html
 
-            if free_block:
-                # 在 Free 区块内找百分比 "0% used" 等
-                m = re.search(r'(\d+(?:\.\d+)?)\s*%\s*used', free_block, re.IGNORECASE)
-                if m:
-                    allowance = m.group(1) + "% used"
-                # 在 Free 区块内找重置时间 "Resets in 6d 16h"
-                m2 = re.search(r'Resets?\s*in\s*([\d.]+d\s*[\d.]+h)', free_block, re.IGNORECASE)
-                if m2:
-                    resets = m2.group(1)
+            # 在 Free 区块内找百分比 "0% used" 等
+            m = re.search(r'(\d+(?:\.\d+)?)\s*%\s*used', free_block, re.IGNORECASE)
+            if m:
+                allowance = m.group(1) + "% used"
+            # 在 Free 区块内找重置时间 "Resets in 6d 16h"
+            m2 = re.search(r'Resets?\s*in\s*([\d.]+d\s*[\d.]+h)', free_block, re.IGNORECASE)
+            if m2:
+                resets = m2.group(1)
 
             self._send_json(200, {
                 "account": s.email,
