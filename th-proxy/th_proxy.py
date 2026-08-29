@@ -339,24 +339,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             for anchor in ["Free Access", "Free access", "free access", "Free allowance", "free allowance"]:
                 idx = html.find(anchor)
                 if idx >= 0:
-                    free_block = html[idx:idx+1500]
+                    free_block = html[idx:idx+3000]
                     break
 
             if free_block:
-                # 在 Free 区块内找百分比
-                for pat in [
-                    r'(\d+(?:\.\d+)?)\s*%\s*(?:used|consumed)',
-                    r'used[^}]{0,60}?(\d+(?:\.\d+)?)\s*%',
-                    r'(\d+(?:\.\d+)?)\s*%',
-                ]:
-                    m = re.search(pat, free_block, re.IGNORECASE)
-                    if m:
-                        allowance = m.group(1) + "% used"
-                        break
-                # 在 Free 区块内找重置时间 "Resets in Xd Yh"
-                m2 = re.search(r"Resets?\s*(?:in)?\s*[^0-9]{0,30}?([\d.]+d\s*[\d.]+h)", free_block, re.IGNORECASE)
-                if not m2:
-                    m2 = re.search(r"([\d.]+d\s*[\d.]+h)", free_block)
+                # 在 Free 区块内找百分比 "0% used" 等
+                m = re.search(r'(\d+(?:\.\d+)?)\s*%\s*used', free_block, re.IGNORECASE)
+                if m:
+                    allowance = m.group(1) + "% used"
+                # 在 Free 区块内找重置时间 "Resets in 6d 16h"
+                m2 = re.search(r'Resets?\s*in\s*([\d.]+d\s*[\d.]+h)', free_block, re.IGNORECASE)
                 if m2:
                     resets = m2.group(1)
 
