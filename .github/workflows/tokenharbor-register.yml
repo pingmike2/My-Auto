@@ -39,9 +39,9 @@ jobs:
       - name: 计算本批账号数
         id: calc
         run: |
-          TOTAL=${{ inputs.accounts || '4' }}
+          TOTAL=${{ inputs.accounts || '3' }}
           BATCH=${{ matrix.batch }}
-          # 每批1个号, 4批并行 = 4个号; 每批独立runner独立WARP
+          # 每批1个号, 3批并行 = 3个号; 每批独立runner独立WARP
           COUNT=$(( BATCH <= TOTAL ? 1 : 0 ))
           echo "total=$TOTAL batch=$BATCH count=$COUNT"
           echo "TH_COUNT=$COUNT" >> "$GITHUB_ENV"
