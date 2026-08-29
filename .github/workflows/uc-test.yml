@@ -9,7 +9,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -20,7 +20,7 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb chromium unzip curl jq
+          sudo apt-get install -y xvfb unzip curl jq ca-certificates
           pip install undetected-chromedriver selenium
 
       - name: 启用 WARP
@@ -45,34 +45,34 @@ jobs:
           from selenium.webdriver.common.by import By
           import time, json, urllib.request
 
-          # 记录出口IP
           ip = urllib.request.urlopen("https://api.ipify.org", timeout=10).read().decode()
           print("出口IP:", ip)
 
+          # 不指定driver, 让 uc 自动管理浏览器+driver
           driver = uc.Chrome(headless=False)
+          print("uc 浏览器版本:", driver.capabilities.get("browserVersion"))
           driver.get("https://tokenharbor.ai/login?mode=signup")
           time.sleep(10)
 
           wd = driver.execute_script("return navigator.webdriver")
           print("navigator.webdriver =", wd)
 
-          # 填表
-          email = driver.find_element(By.CSS_SELECTOR, "input[type=email]")
-          email.clear()
-          email.send_keys("uc_gha_test@emalupe.com")
-          pw = driver.find_element(By.CSS_SELECTOR, "input[type=password]")
-          pw.clear()
-          pw.send_keys("THtest123456!A1")
-          time.sleep(1)
           try:
+              email = driver.find_element(By.CSS_SELECTOR, "input[type=email]")
+              email.clear()
+              email.send_keys("uc_gha_test2@emalupe.com")
+              pw = driver.find_element(By.CSS_SELECTOR, "input[type=password]")
+              pw.clear()
+              pw.send_keys("THtest123456!A1")
+              time.sleep(1)
               btn = driver.find_element(By.XPATH, "//*[text()='Create account']")
               btn.click()
               print("已点 Create account")
           except Exception as e:
-              print("按钮点击失败:", str(e)[:60])
+              print("填表/提交失败:", str(e)[:80])
 
-          # 每2秒检查 iframe 20次
-          for i in range(20):
+          # 每2秒检查 iframe 15次
+          for i in range(15):
               time.sleep(2)
               html = driver.page_source
               n = html.count("<iframe")
@@ -80,9 +80,22 @@ jobs:
               print(f"  [{i*2}s] iframe标签={n} CF={has_cf}")
               if n > 0:
                   print(">>> iframe 出现, UC 有效!")
+                  # 尝试点勾选框
+                  try:
+                      iframe = driver.find_element(By.CSS_SELECTOR, 'iframe[src*="challenges.cloudflare.com"]')
+                      driver.switch_to.frame(iframe)
+                      time.sleep(2)
+                      # 点 checkbox
+                      cb = driver.find_element(By.CSS_SELECTOR, "[role=checkbox], .rc-anchor-container, #rc-anchor-container")
+                      cb.click()
+                      print("已点勾选框")
+                      driver.switch_to.default_content()
+                  except Exception as e:
+                      print("点勾选框失败:", str(e)[:60])
                   break
           driver.save_screenshot("/tmp/uc_gha.png")
           driver.quit()
+          print("=== UC 测试完成 ===")
           PY
 
       - name: 上传截图
