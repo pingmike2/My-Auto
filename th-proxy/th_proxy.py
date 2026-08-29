@@ -324,21 +324,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
             html = s.fetch_dashboard()
             allowance = ""
             resets = ""
-            # Next.js RSC payload: self.__next_f.push([1,"...JSON..."])
-            # 额度可能藏在 JSON 字符串里, 先整体搜文本
-            for pat in [
-                r'"free[^"]{0,40}?"[^}]{0,120}?(\d+(?:\.\d+)?)\s*%',
-                r'allowance[^}]{0,80}?(\d+(?:\.\d+)?)\s*%',
-                r'(\d+(?:\.\d+)?)\s*%\s*(?:used|consumed)',
-                r'used[^}]{0,60}?(\d+(?:\.\d+)?)\s*%',
-            ]:
-                m = re.search(pat, html, re.IGNORECASE)
-                if m:
-                    allowance = m.group(1) + "% used"
+            # 先定位 "Free Access" / "Free allowance" 区块, 再在其附近提取
+            free_block = ""
+            for anchor in ["Free Access", "Free access", "free access", "Free allowance", "free allowance"]:
+                idx = html.find(anchor)
+                if idx >= 0:
+                    free_block = html[idx:idx+1500]
                     break
-            m2 = re.search(r"([\d.]+d\s*[\d.]+h)", html)
-            if m2:
-                resets = m2.group(1)
+
+            if free_block:
+                # 在 Free 区块内找百分比
+                for pat in [
+                    r'(\d+(?:\.\d+)?)\s*%\s*(?:used|consumed)',
+                    r'used[^}]{0,60}?(\d+(?:\.\d+)?)\s*%',
+                    r'(\d+(?:\.\d+)?)\s*%',
+                ]:
+                    m = re.search(pat, free_block, re.IGNORECASE)
+                    if m:
+                        allowance = m.group(1) + "% used"
+                        break
+                # 在 Free 区块内找重置时间 "Resets in Xd Yh"
+                m2 = re.search(r"Resets?\s*(?:in)?\s*[^0-9]{0,30}?([\d.]+d\s*[\d.]+h)", free_block, re.IGNORECASE)
+                if not m2:
+                    m2 = re.search(r"([\d.]+d\s*[\d.]+h)", free_block)
+                if m2:
+                    resets = m2.group(1)
+
             self._send_json(200, {
                 "account": s.email,
                 "free_allowance_used": allowance or "unknown",
