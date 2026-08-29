@@ -322,6 +322,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         try:
             html = s.fetch_dashboard()
+            # 若返回的是登录页 (无 Free 区块), 说明 session 失效, 刷新后重试一次
+            if "Free Access" not in html and "Free allowance" not in html and "free allowance" not in html:
+                print(f"[TH] {s.email[:20]} dashboard 返回非登录页(可能session失效), 刷新重试...")
+                try:
+                    s.refresh()
+                except Exception as e:
+                    print(f"[TH] 刷新失败: {e}")
+                if s.is_valid():
+                    html = s.fetch_dashboard()
+
             allowance = ""
             resets = ""
             # 先定位 "Free Access" / "Free allowance" 区块, 再在其附近提取
