@@ -309,11 +309,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 {"id": "deepseek-v4-flash:free", "object": "model", "owned_by": "tokenharbor"},
             ]})
         elif self.path.startswith("/v1/usage"):
-            self._handle_usage()
+            self._handle_usage(debug="debug" in self.path)
         else:
             self._send_json(404, {"error": {"message": "Not Found"}})
 
-    def _handle_usage(self):
+    def _handle_usage(self, debug=False):
         """查看当前账号的免费额度 (从 dashboard HTML 解析)"""
         with pool.pool_lock:
             s = pool.sessions[0] if pool.sessions else None
@@ -356,6 +356,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "resets_in": resets or "unknown",
                 "accounts_ready": len([x for x in pool.sessions if x.is_valid()]),
                 "pending": len(pool.all_accounts),
+                **({"debug_block": free_block[:800] if free_block else "NO FREE BLOCK FOUND"} if debug else {})
             })
         except Exception as e:
             self._send_json(502, {"error": {"message": f"Failed to fetch usage: {e}"}})
