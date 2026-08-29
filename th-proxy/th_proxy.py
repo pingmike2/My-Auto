@@ -48,7 +48,17 @@ class THSession:
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--window-size=1280,900")
         opts.add_argument("--user-data-dir=/tmp/th_chrome")
-        driver = uc.Chrome(options=opts, version_main=None)
+        # 自动检测 chrome 版本, 让 uc 下载匹配的 chromedriver
+        import subprocess
+        chrome_ver = ""
+        try:
+            out = subprocess.run(
+                ["google-chrome", "--version"], capture_output=True, text=True, timeout=10)
+            chrome_ver = re.search(r"(\d+)\.", out.stdout or "").group(1)
+            print(f"[TH] 检测到 Chrome 主版本: {chrome_ver}")
+        except Exception:
+            pass
+        driver = uc.Chrome(options=opts, version_main=int(chrome_ver) if chrome_ver else None)
 
         try:
             # 登录

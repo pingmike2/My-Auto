@@ -1,14 +1,13 @@
 # Token Harbor Web Session Proxy — amd64 only
-# undetected-chromedriver 需要 x86_64
 FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# 安装 chromium + xvfb + 依赖
+# 安装 Google Chrome 稳定版 (最新 152, 匹配 undetected-chromedriver)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
-    chromium-driver \
+    curl \
+    gnupg \
     xvfb \
     xauth \
     fonts-liberation \
@@ -26,6 +25,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgbm1 \
     libasound2 \
     libpangocairo-1.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Google Chrome 稳定版 (不是系统 chromium, 确保版本匹配 uc)
+RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
