@@ -1,0 +1,94 @@
+name: 🔬 UC Turnstile Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb chromium unzip curl jq
+          pip install undetected-chromedriver selenium
+
+      - name: 启用 WARP
+        uses: fscarmen/warp-on-actions@v1.3
+        with:
+          stack: ipv4
+          mode: client
+
+      - name: 修复 DNS
+        run: |
+          sudo systemctl stop systemd-resolved 2>/dev/null || true
+          sudo rm -f /etc/resolv.conf
+          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+
+      - name: UC 测试 Turnstile
+        run: |
+          Xvfb :99 -screen 0 1280x900x24 &
+          sleep 2
+          export DISPLAY=:99
+          python3 - <<'PY'
+          import undetected_chromedriver as uc
+          from selenium.webdriver.common.by import By
+          import time, json, urllib.request
+
+          # 记录出口IP
+          ip = urllib.request.urlopen("https://api.ipify.org", timeout=10).read().decode()
+          print("出口IP:", ip)
+
+          driver = uc.Chrome(headless=False)
+          driver.get("https://tokenharbor.ai/login?mode=signup")
+          time.sleep(10)
+
+          wd = driver.execute_script("return navigator.webdriver")
+          print("navigator.webdriver =", wd)
+
+          # 填表
+          email = driver.find_element(By.CSS_SELECTOR, "input[type=email]")
+          email.clear()
+          email.send_keys("uc_gha_test@emalupe.com")
+          pw = driver.find_element(By.CSS_SELECTOR, "input[type=password]")
+          pw.clear()
+          pw.send_keys("THtest123456!A1")
+          time.sleep(1)
+          try:
+              btn = driver.find_element(By.XPATH, "//*[text()='Create account']")
+              btn.click()
+              print("已点 Create account")
+          except Exception as e:
+              print("按钮点击失败:", str(e)[:60])
+
+          # 每2秒检查 iframe 20次
+          for i in range(20):
+              time.sleep(2)
+              html = driver.page_source
+              n = html.count("<iframe")
+              has_cf = "challenges.cloudflare.com" in html
+              print(f"  [{i*2}s] iframe标签={n} CF={has_cf}")
+              if n > 0:
+                  print(">>> iframe 出现, UC 有效!")
+                  break
+          driver.save_screenshot("/tmp/uc_gha.png")
+          driver.quit()
+          PY
+
+      - name: 上传截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uc-gha-screenshot
+          path: /tmp/uc_gha.png
+          if-no-files-found: ignore
