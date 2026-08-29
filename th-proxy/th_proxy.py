@@ -479,21 +479,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def _parse_sse(line):
-    """从内部端点 SSE 行提取文本"""
-    if line.startswith("data: "):
-        try:
+    """从内部端点 SSE 行提取文本 (过滤思考/reasoning 部分, 只保留回答)"""
+    try:
+        # 1) 跳过 reasoning / thinking 事件和字段
+        lowered = line.lower()
+        if "reasoning" in lowered or "thinking" in lowered:
+            if line.startswith("data: "):
+                # 检查 data 里的字段名是否是 reasoning 类
+                try:
+                    d = json.loads(line[6:])
+                    for rk in ("reasoning_content", "reasoning", "thinking", "thought", "analysis"):
+                        if rk in d:
+                            return ""
+                        if isinstance(d.get("delta"), dict) and rk in d["delta"]:
+                            return ""
+                        if isinstance(d.get("message"), dict) and rk in d["message"]:
+                            return ""
+                except Exception:
+                    pass
+            # 非 data 行 (event: reasoning 等) 直接跳过
+            if not line.startswith("data: "):
+                return ""
+
+        # 2) 正常提取回答文本
+        if line.startswith("data: "):
             d = json.loads(line[6:])
+            # 显式忽略 reasoning 类字段
+            for rk in ("reasoning_content", "reasoning", "thinking", "thought", "analysis"):
+                if rk in d:
+                    return ""
             for key in ("token", "content", "text", "delta", "message", "chunk"):
                 if key in d and isinstance(d[key], str):
                     return d[key]
                 if key in d and isinstance(d[key], dict):
                     inner = d[key]
+                    # delta/message 内的 reasoning 字段也跳过
+                    for rk in ("reasoning_content", "reasoning", "thinking", "thought", "analysis"):
+                        if rk in inner:
+                            return ""
                     for k2 in ("content", "text", "token"):
                         if k2 in inner and isinstance(inner[k2], str):
                             return inner[k2]
                     break
-        except Exception:
-            pass
+    except Exception:
+        pass
     return ""
 
 
