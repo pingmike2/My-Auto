@@ -153,7 +153,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not self._auth_ok():
             self._send_json(401, {"error": {"message": "Unauthorized"}})
             return
-        if self.path.startswith("/v1/models"):
+        # 健康检查: Northflank 需要 / 或 /healthz 返回 200
+        if self.path in ("/", "/healthz", "/health"):
+            self._send_json(200, {"status": "ok"})
+        elif self.path.startswith("/v1/models"):
             self._send_json(200, {"object": "list", "data": [
                 {"id": "deepseek-v4-flash:free", "object": "model", "owned_by": "tokenharbor"},
             ]})
@@ -194,22 +197,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
             print("[TH] session 过期, 刷新中...")
             session.refresh()
 
-        # 收集回复 (内部端点 SSE: event: token / data: {"token":"..."} 之类)
+        # 收集回复 (内部端点 SSE: event: token / data: {...})
         full_text = ""
         events = []
 
         def on_line(line):
             nonlocal full_text
             events.append(line)
+            print(f"[SSE] {line[:200]}", flush=True)
             if line.startswith("data: "):
                 try:
                     d = json.loads(line[6:])
-                    if "token" in d:
-                        full_text += d["token"]
-                    elif "content" in d:
-                        full_text += d["content"]
-                    elif "text" in d:
-                        full_text += d["text"]
+                    # 兼容多种字段名
+                    for key in ("token", "content", "text", "delta", "message", "chunk"):
+                        if key in d and isinstance(d[key], str):
+                            full_text += d[key]
+                            break
+                        if key in d and isinstance(d[key], dict):
+                            inner = d[key]
+                            for k2 in ("content", "text", "token"):
+                                if k2 in inner and isinstance(inner[k2], str):
+                                    full_text += inner[k2]
+                                    break
+                            break
                 except Exception:
                     pass
 
