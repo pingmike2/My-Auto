@@ -202,7 +202,7 @@ class THSession:
 
 # ============ 多账号管理器 (懒加载) ============
 class THAccountPool:
-    def __init__(self, accounts, initial=1):
+    def __init__(self, accounts, initial=3):
         self.all_accounts = [(e, p) for e, p in accounts]   # 全部账号 (待加载池)
         self.sessions = []                                   # 已加载的 session
         self.pool_lock = threading.Lock()
@@ -299,6 +299,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path in ("/", "/healthz", "/health"):
+            # 进程活着即返回 ok, 不依赖登录完成 (避免启动期被 readiness 杀掉)
             self._send_json(200, {"status": "ok", "accounts_ready": len([s for s in pool.sessions if s.is_valid()]), "pending": len(pool.all_accounts)})
             return
         if not self._auth_ok():
@@ -491,12 +492,11 @@ def main():
         raise SystemExit(1)
     print(f"[TH] Token Harbor web proxy 启动: port={PORT} model={MODEL}")
     print(f"[TH] 账号数: {len(ACCOUNTS)}")
-    for e, _ in ACCOUNTS:
-        print(f"  - {e}")
-    pool.init_all()
 
-    # 后台定时刷新所有 session (每 25 分钟)
-    def bg_refresh():
+    # 后台登录 (不阻塞 HTTP 服务, 避免 readiness probe 杀容器)
+    def bg_login():
+        pool.init_all()
+        # 后台定时刷新所有 session (每 25 分钟)
         while True:
             time.sleep(1500)
             try:
@@ -504,11 +504,11 @@ def main():
             except Exception as e:
                 print(f"[TH] 后台刷新失败: {e}")
 
-    threading.Thread(target=bg_refresh, daemon=True).start()
+    threading.Thread(target=bg_login, daemon=True).start()
 
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), Handler) as httpd:
-        print(f"[TH] 监听 0.0.0.0:{PORT}")
+        print(f"[TH] 监听 0.0.0.0:{PORT} (后台登录中...)")
         httpd.serve_forever()
 
 
