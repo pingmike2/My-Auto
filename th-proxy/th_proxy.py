@@ -1,40 +1,74 @@
 #!/usr/bin/env python3
 """
-Token Harbor Web Session Proxy
-用真实浏览器登录 tokenharbor, 提取 web session, 转发到内部端点 /api/direct-chat/stream。
-不消耗 API key 额度, 一个账号即可。
-
-用法:
-  TH_EMAIL=xxx TH_PASS=xxx AUTH_KEY=xxx python3 th_proxy.py
+Token Harbor Web Session Proxy (多账号接力版)
+用真实浏览器登录多个 tokenharbor 账号, 提取 web session, 转发到内部端点。
+一个账号额度用尽自动切换下一个。
 
 环境变量:
-  TH_EMAIL    tokenharbor 账号
-  TH_PASS     密码
-  AUTH_KEY    客户端鉴权 key (请求头 Authorization: Bearer <AUTH_KEY>)
-  PORT        监听端口 (默认 8000)
-  MODEL       默认模型 (默认 alibaba/deepseek-v4-flash:free)
+  TH_ACCOUNTS  账号列表, 分号分隔: email1:pass1;email2:pass2
+               兼容旧的 TH_EMAIL/TH_PASS (单个账号)
+  AUTH_KEY     客户端鉴权 key (请求头 Authorization: Bearer <AUTH_KEY>)
+  PORT         监听端口 (默认 8000)
+  MODEL        默认模型 (默认 alibaba/deepseek-v4-flash:free)
 """
-import json, os, re, time, uuid, threading, queue, urllib.request, urllib.error
-import http.server, socketserver, base64
+import json, os, re, time, uuid, threading, urllib.request, urllib.error
+import http.server, socketserver
 
-EMAIL = os.environ.get("TH_EMAIL", "")
-PASS = os.environ.get("TH_PASS", "")
 AUTH_KEY = os.environ.get("AUTH_KEY", "th-web-key")
 PORT = int(os.environ.get("PORT", "8000"))
 MODEL = os.environ.get("MODEL", "alibaba/deepseek-v4-flash:free")
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0"
 
-# ============ Session 管理 ============
+# ============ 账号解析 ============
+def parse_accounts():
+    raw = os.environ.get("TH_ACCOUNTS", "")
+    accts = []
+    if raw:
+        for part in raw.split(";"):
+            part = part.strip()
+            if ":" in part:
+                e, p = part.split(":", 1)
+                accts.append((e.strip(), p.strip()))
+    # 兼容旧版单账号
+    e2 = os.environ.get("TH_EMAIL", "")
+    p2 = os.environ.get("TH_PASS", "")
+    if e2 and p2 and (e2, p2) not in accts:
+        accts.append((e2, p2))
+    return accts
+
+
+ACCOUNTS = parse_accounts()
+
+# ============ 单账号 Session ============
 class THSession:
-    def __init__(self):
+    def __init__(self, email, password):
+        self.email = email
+        self.password = password
         self.cookie = ""
         self.session_id = ""
         self.lock = threading.Lock()
         self.last_refresh = 0
+        self.exhausted = False      # 额度用尽标记
+        self.exhausted_at = 0       # 用尽时间 (用于重置后恢复)
+        self.error_count = 0
 
     def is_valid(self):
         return bool(self.cookie) and (time.time() - self.last_refresh) < 1800
+
+    def can_use(self):
+        # 额度用尽则冷却 60 分钟 (Token Harbor 滚动周期较久, 保守处理)
+        if self.exhausted:
+            if time.time() - self.exhausted_at > 3600:
+                self.exhausted = False
+            else:
+                return False
+        return True
+
+    def mark_exhausted(self):
+        self.exhausted = True
+        self.exhausted_at = time.time()
+        print(f"[TH] 账号 {self.email[:20]} 额度用尽, 已标记")
 
     def refresh(self):
         """用 undetected-chromedriver 登录并提取 session"""
@@ -48,28 +82,27 @@ class THSession:
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--window-size=1280,900")
         opts.add_argument("--user-data-dir=/tmp/th_chrome")
-        # 自动检测 chrome 版本, 让 uc 下载匹配的 chromedriver
         import subprocess
         chrome_ver = ""
         try:
             out = subprocess.run(
                 ["google-chrome", "--version"], capture_output=True, text=True, timeout=10)
-            chrome_ver = re.search(r"(\d+)\.", out.stdout or "").group(1)
-            print(f"[TH] 检测到 Chrome 主版本: {chrome_ver}")
+            m = re.search(r"(\d+)\.", out.stdout or "")
+            if m:
+                chrome_ver = m.group(1)
         except Exception:
             pass
         driver = uc.Chrome(options=opts, version_main=int(chrome_ver) if chrome_ver else None)
 
         try:
-            # 登录
             driver.get("https://tokenharbor.ai/login")
             time.sleep(12)
             email_box = driver.find_element(By.CSS_SELECTOR, "input[type=email]")
             email_box.clear()
-            email_box.send_keys(EMAIL)
+            email_box.send_keys(self.email)
             pw = driver.find_element(By.CSS_SELECTOR, "input[type=password]")
             pw.clear()
-            pw.send_keys(PASS)
+            pw.send_keys(self.password)
             time.sleep(2)
             for txt in ["Sign in", "Login", "Continue"]:
                 try:
@@ -82,22 +115,21 @@ class THSession:
             time.sleep(15)
 
             if "/login" in driver.current_url:
-                raise RuntimeError("登录失败, 仍在登录页")
+                raise RuntimeError(f"登录失败: {self.email}")
 
-            # 访问 /chat 获取 sessionId
             driver.get("https://tokenharbor.ai/chat")
             time.sleep(10)
             cur = driver.current_url
             m = re.search(r"/chat/([a-f0-9-]{32,})", cur)
             sid = m.group(1) if m else str(uuid.uuid4())
-
             cookie = driver.execute_script("return document.cookie")
 
             with self.lock:
                 self.cookie = cookie
                 self.session_id = sid
                 self.last_refresh = time.time()
-            print(f"[TH] session 刷新成功: sid={sid[:20]}... cookie_len={len(cookie)}")
+                self.error_count = 0
+            print(f"[TH] 账号 {self.email[:25]} session 就绪: sid={sid[:12]}... cookie_len={len(cookie)}")
         finally:
             try:
                 driver.quit()
@@ -105,7 +137,7 @@ class THSession:
                 pass
 
     def chat_stream(self, content, model, callback):
-        """调内部端点, SSE 流式, callback(line)"""
+        """调内部端点, SSE 流式, 返回 True=成功 / False=额度限制"""
         body = json.dumps({
             "sessionId": self.session_id,
             "content": content,
@@ -121,14 +153,78 @@ class THSession:
                 "Referer": f"https://tokenharbor.ai/chat/{self.session_id}",
                 "User-Agent": UA,
             })
-        with urllib.request.urlopen(req, timeout=300) as r:
-            for line in r:
-                line = line.decode("utf-8", "replace").rstrip("\n")
-                if line:
-                    callback(line)
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                for line in r:
+                    line = line.decode("utf-8", "replace").rstrip("\n")
+                    if line:
+                        callback(line)
+                return True
+        except urllib.error.HTTPError as e:
+            body_err = e.read().decode("utf-8", "replace")
+            # 429 = 额度用尽; 401 = session 失效
+            if e.code == 429 or "quota" in body_err or "allowance" in body_err or "limit" in body_err:
+                self.mark_exhausted()
+                return False
+            if e.code == 401:
+                self.error_count += 1
+                return False
+            print(f"[TH] {self.email[:20]} 上游错误 {e.code}: {body_err[:150]}")
+            self.error_count += 1
+            return False
+        except Exception:
+            self.error_count += 1
+            return False
 
 
-session = THSession()
+# ============ 多账号管理器 ============
+class THAccountPool:
+    def __init__(self, accounts):
+        self.sessions = [THSession(e, p) for e, p in accounts]
+        self.pool_lock = threading.Lock()
+        self.cursor = 0
+
+    def all_sessions(self):
+        return self.sessions
+
+    def init_all(self):
+        """启动时并发登录所有账号"""
+        def do_login(s):
+            try:
+                s.refresh()
+            except Exception as e:
+                print(f"[TH] 账号 {s.email[:20]} 登录失败: {e}")
+        threads = [threading.Thread(target=do_login, args=(s,), daemon=True) for s in self.sessions]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=180)
+        ok = [s for s in self.sessions if s.is_valid()]
+        print(f"[TH] 初始登录完成: {len(ok)}/{len(self.sessions)} 账号就绪")
+
+    def pick(self):
+        """round-robin 挑一个可用账号"""
+        with self.pool_lock:
+            n = len(self.sessions)
+            for i in range(n):
+                idx = (self.cursor + i) % n
+                s = self.sessions[idx]
+                if s.can_use() and (s.is_valid() or s.error_count < 3):
+                    self.cursor = (idx + 1) % n
+                    return s
+            # 全部不可用, 强制用第一个
+            return self.sessions[0]
+
+    def refresh_all(self):
+        for s in self.sessions:
+            if not s.is_valid():
+                try:
+                    s.refresh()
+                except Exception as e:
+                    print(f"[TH] 刷新 {s.email[:20]} 失败: {e}")
+
+
+pool = THAccountPool(ACCOUNTS)
 
 # ============ OpenAI 兼容 HTTP 服务 ============
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -150,15 +246,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
-        # 健康检查: 免鉴权 (Northflank Readiness Probe 不带 token)
         if self.path in ("/", "/healthz", "/health"):
-            self._send_json(200, {"status": "ok"})
+            self._send_json(200, {"status": "ok", "accounts_ready": len([s for s in pool.all_sessions() if s.is_valid()])})
             return
-
         if not self._auth_ok():
             self._send_json(401, {"error": {"message": "Unauthorized"}})
             return
-        elif self.path.startswith("/v1/models"):
+        if self.path.startswith("/v1/models"):
             self._send_json(200, {"object": "list", "data": [
                 {"id": "deepseek-v4-flash:free", "object": "model", "owned_by": "tokenharbor"},
             ]})
@@ -183,9 +277,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         messages = req.get("messages", [])
         content = messages[-1].get("content", "") if messages else ""
         stream = req.get("stream", False)
-        model = MODEL
-        # 支持客户端传模型, 自动转 alibaba/ 前缀
         client_model = req.get("model", "")
+        model = MODEL
         if client_model:
             if client_model.startswith("alibaba/"):
                 model = client_model
@@ -194,59 +287,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 model = MODEL
 
-        # 确保 session 有效
-        if not session.is_valid():
-            print("[TH] session 过期, 刷新中...")
-            session.refresh()
-
-        # 收集回复 (内部端点 SSE: event: token / data: {...})
+        # 多账号接力: 依次尝试, 额度尽切下一个
+        tried = set()
         full_text = ""
-        events = []
+        success = False
 
-        def on_line(line):
-            nonlocal full_text
-            events.append(line)
-            print(f"[SSE] {line[:200]}", flush=True)
-            if line.startswith("data: "):
+        for attempt in range(len(pool.all_sessions())):
+            s = pool.pick()
+            if id(s) in tried:
+                break
+            tried.add(id(s))
+
+            if not s.is_valid():
                 try:
-                    d = json.loads(line[6:])
-                    # 兼容多种字段名
-                    for key in ("token", "content", "text", "delta", "message", "chunk"):
-                        if key in d and isinstance(d[key], str):
-                            full_text += d[key]
-                            break
-                        if key in d and isinstance(d[key], dict):
-                            inner = d[key]
-                            for k2 in ("content", "text", "token"):
-                                if k2 in inner and isinstance(inner[k2], str):
-                                    full_text += inner[k2]
-                                    break
-                            break
+                    s.refresh()
                 except Exception:
-                    pass
+                    continue
+            if not s.can_use():
+                continue
 
-        try:
-            session.chat_stream(content, model, on_line)
-        except urllib.error.HTTPError as e:
-            self._send_json(502, {"error": {"message": f"Upstream {e.code}: {e.read()[:200]}"}})
+            print(f"[TH] 使用账号: {s.email[:25]} (尝试 {attempt+1})")
+
+            def on_line(line, _acc=None):
+                nonlocal full_text
+                full_text += _parse_sse(line)
+
+            ok = s.chat_stream(content, model, on_line)
+            if ok:
+                success = True
+                break
+            # 失败继续下一个账号
+
+        if not success:
+            self._send_json(503, {"error": {"message": "All accounts unavailable (quota exhausted or login failed)"}})
             return
-        except Exception as e:
-            # 可能是 session 失效, 刷新重试一次
-            print(f"[TH] 转发失败({e}), 刷新 session 重试...")
-            try:
-                session.refresh()
-                full_text = ""
-                events = []
-                session.chat_stream(content, model, on_line)
-            except Exception as e2:
-                self._send_json(502, {"error": {"message": f"Upstream error: {e2}"}})
-                return
 
         if not full_text:
             full_text = "(empty response)"
 
         if stream:
-            # OpenAI 流式格式
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
@@ -278,18 +357,41 @@ class Handler(http.server.BaseHTTPRequestHandler):
             })
 
 
-def main():
-    print(f"[TH] Token Harbor web proxy 启动: port={PORT} model={MODEL}")
-    print(f"[TH] 登录账号: {EMAIL}")
-    session.refresh()
-    print("[TH] 初始 session 就绪")
+def _parse_sse(line):
+    """从内部端点 SSE 行提取文本"""
+    if line.startswith("data: "):
+        try:
+            d = json.loads(line[6:])
+            for key in ("token", "content", "text", "delta", "message", "chunk"):
+                if key in d and isinstance(d[key], str):
+                    return d[key]
+                if key in d and isinstance(d[key], dict):
+                    inner = d[key]
+                    for k2 in ("content", "text", "token"):
+                        if k2 in inner and isinstance(inner[k2], str):
+                            return inner[k2]
+                    break
+        except Exception:
+            pass
+    return ""
 
-    # 后台定时刷新 (每 25 分钟)
+
+def main():
+    if not ACCOUNTS:
+        print("[TH] ❌ 未配置账号! 设置 TH_ACCOUNTS='email1:pass1;email2:pass2'")
+        raise SystemExit(1)
+    print(f"[TH] Token Harbor web proxy 启动: port={PORT} model={MODEL}")
+    print(f"[TH] 账号数: {len(ACCOUNTS)}")
+    for e, _ in ACCOUNTS:
+        print(f"  - {e}")
+    pool.init_all()
+
+    # 后台定时刷新所有 session (每 25 分钟)
     def bg_refresh():
         while True:
             time.sleep(1500)
             try:
-                session.refresh()
+                pool.refresh_all()
             except Exception as e:
                 print(f"[TH] 后台刷新失败: {e}")
 
