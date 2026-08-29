@@ -1,0 +1,29 @@
+name: Force delete container package
+
+on:
+  workflow_dispatch:
+
+jobs:
+  delete-package:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Delete package img
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const packageName = "my-auto/th-proxy";
+            const packageType = "container";
+
+            console.log("Deleting entire package...");
+
+            await github.rest.packages.deletePackageForUser({
+              username: owner,
+              package_type: packageType,
+              package_name: packageName,
+            });
+
+            console.log("Package deleted successfully.");
