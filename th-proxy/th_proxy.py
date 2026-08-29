@@ -189,9 +189,26 @@ class THSession:
             })
         try:
             with urllib.request.urlopen(req, timeout=300) as r:
+                last_event = "message"   # SSE 当前事件类型, 默认 message
                 for line in r:
                     line = line.decode("utf-8", "replace").rstrip("\n")
-                    if line:
+                    if not line:
+                        continue
+                    if line.startswith("event: "):
+                        last_event = line[7:].strip().lower()
+                        print(f"[SSE-EVENT] {last_event}", flush=True)
+                        continue
+                    if line.startswith("data: "):
+                        # 只有回答类事件才往回调送 (过滤 reasoning/thinking/citation 等)
+                        if last_event in (
+                            "reasoning", "reasoning_content", "thinking", "thought",
+                            "analysis", "citation", "citations", "error",
+                            "usage", "usage_meta", "ping", "done", "meta",
+                            "status", "tool", "tool_call",
+                        ):
+                            print(f"[SSE-DROP] event={last_event} data={line[:120]}", flush=True)
+                            continue
+                        print(f"[SSE-KEEP] event={last_event} data={line[:120]}", flush=True)
                         callback(line)
                 return True
         except urllib.error.HTTPError as e:
