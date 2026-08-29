@@ -60,9 +60,9 @@ class THSession:
         return bool(self.cookie) and (time.time() - self.last_refresh) < 1800
 
     def can_use(self):
-        # 额度用尽则冷却 60 分钟 (Token Harbor 滚动周期较久, 保守处理)
+        # 额度用尽则冷却 7 天 (Token Harbor 7天滚动周期, 用完等重置)
         if self.exhausted:
-            if time.time() - self.exhausted_at > 3600:
+            if time.time() - self.exhausted_at > 7*24*3600:
                 self.exhausted = False
             else:
                 return False
