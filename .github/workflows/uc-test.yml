@@ -49,7 +49,7 @@ jobs:
           print("出口IP:", ip)
 
           # 不指定driver, 让 uc 自动管理浏览器+driver
-          driver = uc.Chrome(headless=False)
+          driver = uc.Chrome(headless=False, version_main=151)
           print("uc 浏览器版本:", driver.capabilities.get("browserVersion"))
           driver.get("https://tokenharbor.ai/login?mode=signup")
           time.sleep(10)
