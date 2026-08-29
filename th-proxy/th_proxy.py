@@ -14,6 +14,8 @@ Token Harbor Web Session Proxy (多账号接力版)
 import json, os, re, time, uuid, threading, urllib.request, urllib.error
 import http.server, socketserver
 
+LOGIN_LOCK = threading.Lock()  # 全局登录锁: 一次只登录一个浏览器
+
 AUTH_KEY = os.environ.get("AUTH_KEY", "th-web-key")
 PORT = int(os.environ.get("PORT", "8000"))
 MODEL = os.environ.get("MODEL", "alibaba/deepseek-v4-flash:free")
@@ -72,7 +74,11 @@ class THSession:
         print(f"[TH] 账号 {self.email[:20]} 额度用尽, 已标记")
 
     def refresh(self):
-        """用 undetected-chromedriver 登录并提取 session"""
+        """用 undetected-chromedriver 登录并提取 session (全局锁, 串行)"""
+        with LOGIN_LOCK:
+            return self._refresh_locked()
+
+    def _refresh_locked(self):
         import undetected_chromedriver as uc
         from selenium.webdriver.common.by import By
 
@@ -93,7 +99,12 @@ class THSession:
                 chrome_ver = m.group(1)
         except Exception:
             pass
-        driver = uc.Chrome(options=opts, version_main=int(chrome_ver) if chrome_ver else None)
+        # 使用预装的 chromedriver, 避免 uc 运行时下载冲突
+        driver = uc.Chrome(
+            options=opts,
+            version_main=int(chrome_ver) if chrome_ver else None,
+            driver_executable_path="/usr/local/bin/chromedriver",
+        )
 
         try:
             driver.get("https://tokenharbor.ai/login")
@@ -180,7 +191,7 @@ class THSession:
 
 # ============ 多账号管理器 (懒加载) ============
 class THAccountPool:
-    def __init__(self, accounts, initial=3):
+    def __init__(self, accounts, initial=1):
         self.all_accounts = [(e, p) for e, p in accounts]   # 全部账号 (待加载池)
         self.sessions = []                                   # 已加载的 session
         self.pool_lock = threading.Lock()

@@ -31,10 +31,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends google-chrome-stable \
+    && apt-get install -y --no-install-recommends google-chrome-stable unzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# 预装匹配的 chromedriver 到固定路径 (避免 uc 每次运行时下载冲突)
+COPY install_chromedriver.sh /app/install_chromedriver.sh
+RUN chmod +x /app/install_chromedriver.sh && /app/install_chromedriver.sh
 
 # 安装 python 依赖
 RUN pip install --no-cache-dir \
