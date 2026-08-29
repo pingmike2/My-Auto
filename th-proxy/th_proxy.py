@@ -148,6 +148,17 @@ class THSession:
             except Exception:
                 pass
 
+    def fetch_dashboard(self):
+        """用当前 cookie 请求 dashboard 页面, 返回 HTML"""
+        req = urllib.request.Request(
+            "https://tokenharbor.ai/dashboard",
+            headers={
+                "Cookie": self.cookie,
+                "User-Agent": UA,
+            })
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.read().decode("utf-8", "replace")
+
     def chat_stream(self, content, model, callback):
         """调内部端点, SSE 流式, 返回 True=成功 / False=额度限制"""
         body = json.dumps({
@@ -297,8 +308,47 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_json(200, {"object": "list", "data": [
                 {"id": "deepseek-v4-flash:free", "object": "model", "owned_by": "tokenharbor"},
             ]})
+        elif self.path.startswith("/v1/usage"):
+            self._handle_usage()
         else:
             self._send_json(404, {"error": {"message": "Not Found"}})
+
+    def _handle_usage(self):
+        """查看当前账号的免费额度 (从 dashboard HTML 解析)"""
+        with pool.pool_lock:
+            s = pool.sessions[0] if pool.sessions else None
+        if not s or not s.is_valid():
+            self._send_json(503, {"error": {"message": "No active session"}})
+            return
+        try:
+            html = s.fetch_dashboard()
+            # 解析 "Free allowance 2% used" 和 "Resets in 6d 21h"
+            allowance = ""
+            resets = ""
+            m = re.search(r"Free allowance\s*</?[^>]*>\s*(\d+)%\s*(?:used)?", html)
+            if m:
+                allowance = m.group(1) + "% used"
+            m2 = re.search(r"Resets?\s*(?:in)?\s*</?[^>]*>\s*([\d.]+d\s*[\d.]+h)", html)
+            if m2:
+                resets = m2.group(1)
+            # 兜底: 宽松匹配
+            if not allowance:
+                m = re.search(r"(\d+)%\s*used", html)
+                if m:
+                    allowance = m.group(1) + "% used"
+            if not resets:
+                m = re.search(r"([\d.]+d\s*[\d.]+h)", html)
+                if m:
+                    resets = m.group(1)
+            self._send_json(200, {
+                "account": s.email,
+                "free_allowance_used": allowance or "unknown",
+                "resets_in": resets or "unknown",
+                "accounts_ready": len([x for x in pool.sessions if x.is_valid()]),
+                "pending": len(pool.all_accounts),
+            })
+        except Exception as e:
+            self._send_json(502, {"error": {"message": f"Failed to fetch usage: {e}"}})
 
     def do_POST(self):
         if not self._auth_ok():
