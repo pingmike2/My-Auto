@@ -1,0 +1,39 @@
+name: 🔨 TH Proxy Docker Image (Public)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'th-proxy/**'
+      - '.github/workflows/th-proxy-docker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: pingmike2/My-Auto/th-proxy
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送镜像 (公开)
+        uses: docker/build-push-action@v6
+        with:
+          context: th-proxy
+          push: true
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAME }}:latest
+            ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
