@@ -322,27 +322,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         try:
             html = s.fetch_dashboard()
-            # dashboard 是客户端渲染, 原始 HTML 可能不含 "Free Access" 文本,
-            # 所以不能据此判定 session 失效。直接用完整 HTML 解析。
 
             allowance = ""
             resets = ""
-            # 先定位 "Free Access" / "Free allowance" 区块 (可能不存在, 用整个 HTML)
+            # 数据可能在 Next.js RSC payload (self.__next_f.push) 里
+            # 提取所有 RSC 内容拼成一个大字符串
+            rsc_parts = re.findall(r'self\.__next_f\.push\(\[1,\s*"((?:[^"\\]|\\.)*)"\]\)', html)
+            rsc_text = "".join(
+                part.encode().decode("unicode_escape", "replace") if "\\u" in part else part
+                for part in rsc_parts
+            )
+            search_scope = html + "\n" + rsc_text
+
+            # 定位 Free 相关区块 (精确 anchor, 避免 meta description 误匹配)
             free_block = ""
-            for anchor in ["Free Access", "Free access", "free access", "Free allowance", "free allowance"]:
-                idx = html.find(anchor)
+            for anchor in ["Free allowance", "free allowance", "allowance", "Resets in", "resets in"]:
+                idx = search_scope.find(anchor)
                 if idx >= 0:
-                    free_block = html[idx:idx+3000]
+                    free_block = search_scope[max(0, idx-300):idx+1500]
                     break
             if not free_block:
-                free_block = html
+                free_block = search_scope
 
-            # 在 Free 区块内找百分比 "0% used" 等
+            # 找百分比 "0% used" 等
             m = re.search(r'(\d+(?:\.\d+)?)\s*%\s*used', free_block, re.IGNORECASE)
             if m:
                 allowance = m.group(1) + "% used"
-            # 在 Free 区块内找重置时间 "Resets in 6d 16h"
+            # 找重置时间 "Resets in 6d 16h" / "resetsIn":"6d 16h" 等
             m2 = re.search(r'Resets?\s*in\s*([\d.]+d\s*[\d.]+h)', free_block, re.IGNORECASE)
+            if not m2:
+                m2 = re.search(r'[Rr]esets?[Ii]n?[^0-9]{0,40}?([\d.]+d\s*[\d.]+h)', free_block)
             if m2:
                 resets = m2.group(1)
 
@@ -352,7 +361,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "resets_in": resets or "unknown",
                 "accounts_ready": len([x for x in pool.sessions if x.is_valid()]),
                 "pending": len(pool.all_accounts),
-                **({"debug_block": free_block[:800] if free_block else "NO FREE BLOCK FOUND"} if debug else {})
+                **({"debug_block": free_block[:600] if free_block else "NO BLOCK FOUND", "rsc_len": len(rsc_text)} if debug else {})
             })
         except Exception as e:
             self._send_json(502, {"error": {"message": f"Failed to fetch usage: {e}"}})
