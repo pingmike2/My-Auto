@@ -23,18 +23,6 @@ jobs:
           sudo apt-get install -y xvfb unzip curl jq ca-certificates
           pip install undetected-chromedriver selenium
 
-      - name: 启用 WARP
-        uses: fscarmen/warp-on-actions@v1.3
-        with:
-          stack: ipv4
-          mode: client
-
-      - name: 修复 DNS
-        run: |
-          sudo systemctl stop systemd-resolved 2>/dev/null || true
-          sudo rm -f /etc/resolv.conf
-          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-
       - name: UC 测试 Turnstile
         run: |
           Xvfb :99 -screen 0 1280x900x24 &
