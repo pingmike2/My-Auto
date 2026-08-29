@@ -25,7 +25,8 @@ def parse_accounts():
     raw = os.environ.get("TH_ACCOUNTS", "")
     accts = []
     if raw:
-        for part in raw.split(";"):
+        # 兼容分号或换行分隔 (accounts.txt 一行一个)
+        for part in re.split(r"[;\n]", raw):
             part = part.strip()
             if ":" in part:
                 e, p = part.split(":", 1)
@@ -177,47 +178,76 @@ class THSession:
             return False
 
 
-# ============ 多账号管理器 ============
+# ============ 多账号管理器 (懒加载) ============
 class THAccountPool:
-    def __init__(self, accounts):
-        self.sessions = [THSession(e, p) for e, p in accounts]
+    def __init__(self, accounts, initial=3):
+        self.all_accounts = [(e, p) for e, p in accounts]   # 全部账号 (待加载池)
+        self.sessions = []                                   # 已加载的 session
         self.pool_lock = threading.Lock()
         self.cursor = 0
+        self.initial = initial                              # 启动加载数
+        self.failed_accounts = {}                           # email -> 失败次数
 
-    def all_sessions(self):
-        return self.sessions
+    def _load(self, email, password):
+        """加载一个账号"""
+        s = THSession(email, password)
+        try:
+            s.refresh()
+        except Exception as e:
+            print(f"[TH] 账号 {email[:25]} 登录失败: {e}")
+            return None
+        if not s.is_valid():
+            return None
+        with self.pool_lock:
+            self.sessions.append(s)
+        print(f"[TH] 已加载账号 {email[:25]}, 当前在线: {len(self.sessions)}")
+        return s
 
     def init_all(self):
-        """启动时并发登录所有账号"""
-        def do_login(s):
-            try:
-                s.refresh()
-            except Exception as e:
-                print(f"[TH] 账号 {s.email[:20]} 登录失败: {e}")
-        threads = [threading.Thread(target=do_login, args=(s,), daemon=True) for s in self.sessions]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=180)
-        ok = [s for s in self.sessions if s.is_valid()]
-        print(f"[TH] 初始登录完成: {len(ok)}/{len(self.sessions)} 账号就绪")
+        """启动时加载前 N 个账号"""
+        print(f"[TH] 启动加载 {min(self.initial, len(self.all_accounts))} 个账号 (共 {len(self.all_accounts)} 个)...")
+        for _ in range(min(self.initial, len(self.all_accounts))):
+            if not self.all_accounts:
+                break
+            email, password = self.all_accounts.pop(0)
+            self._load(email, password)
+        ok = len(self.sessions)
+        print(f"[TH] 启动完成: {ok} 个账号就绪, 待加载 {len(self.all_accounts)} 个")
 
     def pick(self):
-        """round-robin 挑一个可用账号"""
+        """round-robin 挑一个可用账号; 不够则懒加载新的"""
         with self.pool_lock:
             n = len(self.sessions)
+            if n == 0:
+                # 全部加载失败, 从待加载池补
+                if self.all_accounts:
+                    email, password = self.all_accounts.pop(0)
+                    s = self._load(email, password)
+                    if s:
+                        return s
+                return None
             for i in range(n):
                 idx = (self.cursor + i) % n
                 s = self.sessions[idx]
                 if s.can_use() and (s.is_valid() or s.error_count < 3):
                     self.cursor = (idx + 1) % n
                     return s
-            # 全部不可用, 强制用第一个
-            return self.sessions[0]
+            # 全部暂时不可用: 尝试懒加载一个新账号
+            if self.all_accounts:
+                email, password = self.all_accounts.pop(0)
+                s = self._load(email, password)
+                if s:
+                    return s
+            # 没有新账号了, 强制用第一个
+            return self.sessions[0] if self.sessions else None
+
+    def mark_used(self, s):
+        """账号被用尽后, 尝试换新账号"""
+        pass
 
     def refresh_all(self):
         for s in self.sessions:
-            if not s.is_valid():
+            if not s.is_valid() and s.error_count < 3:
                 try:
                     s.refresh()
                 except Exception as e:
@@ -247,7 +277,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path in ("/", "/healthz", "/health"):
-            self._send_json(200, {"status": "ok", "accounts_ready": len([s for s in pool.all_sessions() if s.is_valid()])})
+            self._send_json(200, {"status": "ok", "accounts_ready": len([s for s in pool.sessions if s.is_valid()]), "pending": len(pool.all_accounts)})
             return
         if not self._auth_ok():
             self._send_json(401, {"error": {"message": "Unauthorized"}})
@@ -287,13 +317,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 model = MODEL
 
-        # 多账号接力: 依次尝试, 额度尽切下一个
+        # 多账号接力: 依次尝试, 额度尽切下一个 (懒加载)
         tried = set()
         full_text = ""
         success = False
 
-        for attempt in range(len(pool.all_sessions())):
+        for attempt in range(5):  # 最多尝试 5 次
             s = pool.pick()
+            if s is None:
+                break
             if id(s) in tried:
                 break
             tried.add(id(s))
