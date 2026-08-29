@@ -88,7 +88,10 @@ class THSession:
         opts.add_argument("--disable-gpu")
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--window-size=1280,900")
-        opts.add_argument("--user-data-dir=/tmp/th_chrome")
+        # 每个账号独立 user-data-dir, 避免复用上一个账号的登录态
+        import hashlib
+        data_dir = "/tmp/th_chrome_" + hashlib.md5(self.email.encode()).hexdigest()[:8]
+        opts.add_argument(f"--user-data-dir={data_dir}")
         import subprocess
         chrome_ver = ""
         try:
@@ -108,8 +111,16 @@ class THSession:
 
         try:
             driver.get("https://tokenharbor.ai/login")
-            time.sleep(12)
-            email_box = driver.find_element(By.CSS_SELECTOR, "input[type=email]")
+            # 等待登录表单出现 (最多 40s), 加载慢/被拦时重试
+            email_box = None
+            for _ in range(8):
+                try:
+                    email_box = driver.find_element(By.CSS_SELECTOR, "input[type=email]")
+                    break
+                except Exception:
+                    time.sleep(5)
+            if not email_box:
+                raise RuntimeError(f"登录页未渲染邮箱框: {self.email}")
             email_box.clear()
             email_box.send_keys(self.email)
             pw = driver.find_element(By.CSS_SELECTOR, "input[type=password]")
