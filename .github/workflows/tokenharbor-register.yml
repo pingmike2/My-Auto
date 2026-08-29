@@ -39,16 +39,11 @@ jobs:
       - name: 计算本批账号数
         id: calc
         run: |
-          TOTAL=${{ inputs.accounts || '10' }}
+          TOTAL=${{ inputs.accounts || '4' }}
           BATCH=${{ matrix.batch }}
-          # 每批上限3个号
-          PER=3
-          START=$(( (BATCH - 1) * PER + 1 ))
-          END=$(( BATCH * PER ))
-          [ $END -gt $TOTAL ] && END=$TOTAL
-          COUNT=$(( END - START + 1 ))
-          [ $COUNT -lt 1 ] && COUNT=0
-          echo "total=$TOTAL batch=$BATCH start=$START end=$END count=$COUNT"
+          # 每批1个号, 4批并行 = 4个号; 每批独立runner独立WARP
+          COUNT=$(( BATCH <= TOTAL ? 1 : 0 ))
+          echo "total=$TOTAL batch=$BATCH count=$COUNT"
           echo "TH_COUNT=$COUNT" >> "$GITHUB_ENV"
           echo "BATCH=$BATCH" >> "$GITHUB_ENV"
       - name: 检出 My-Auto
