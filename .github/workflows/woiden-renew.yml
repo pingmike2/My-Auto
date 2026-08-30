@@ -1,8 +1,6 @@
 name: ♻️ Woiden Auto Renew
 
 on:
-  schedule:
-    - cron: '32 */8 * * *'
   workflow_dispatch:
 
 permissions:
