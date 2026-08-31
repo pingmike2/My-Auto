@@ -67,7 +67,7 @@ jobs:
         run: |
           if [ ! -s tokens.json ]; then echo "❌ tokens.json 为空"; exit 1; fi
           echo "待写入 KV keys: $(python3 -c 'import json;print(len(json.load(open("tokens.json"))))')"
-          npx wrangler kv bulk put --binding=ZAI_TOKENS tokens.json
+          npx wrangler kv bulk put --binding=ZAI_TOKENS --remote tokens.json
           echo "✅ KV 灌池完成"
 
       # KV 已固定写死在私库 wrangler.toml; 仅手动触发勾选 deploy 时重新部署
