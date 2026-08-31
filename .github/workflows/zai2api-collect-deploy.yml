@@ -77,5 +77,11 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ZAI_AUTH_KEY: ${{ vars.ZAI_AUTH_KEY }}
         run: |
+          # 注入客户端访问鉴权 key 到 wrangler.toml [vars]
+          if [ -n "$ZAI_AUTH_KEY" ]; then
+            sed -i "s|# ZAI_AUTH_KEY = \"your-client-key\"|ZAI_AUTH_KEY = \"$ZAI_AUTH_KEY\"|" wrangler.toml
+            echo "✅ ZAI_AUTH_KEY 已注入 wrangler.toml"
+          fi
           npx wrangler deploy
