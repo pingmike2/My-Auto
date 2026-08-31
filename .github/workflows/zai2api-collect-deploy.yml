@@ -1,6 +1,9 @@
-name: 🪙 Z.AI deviceToken 采集 + KV 灌池 + 部署
+name: 🪙 Z.AI deviceToken 采集 + KV 灌池
 
 on:
+  schedule:
+    # 每 2 小时: 只采集 + 灌 KV (定时触发无 inputs.deploy → 自动跳过部署)
+    - cron: '23 */2 * * *'
   workflow_dispatch:
     inputs:
       count:
@@ -8,10 +11,10 @@ on:
         required: false
         default: "750"
       deploy:
-        description: 采集后是否部署 Worker
+        description: 是否同时部署 Worker (代码有更新时才需要)
         required: false
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
@@ -27,7 +30,7 @@ jobs:
         with:
           node-version: "22"
 
-      # 拉取私库 zai2api (工作流 + Worker 代码都在私库)
+      # 拉取私库 zai2api (workflow 引用 worker.js + collect-tokens.mjs)
       - name: 拉取私库 zai2api
         uses: actions/checkout@v4
         with:
@@ -51,24 +54,6 @@ jobs:
           [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "❌ 缺 secrets.CLOUDFLARE_API_TOKEN"; exit 1; }
           [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || { echo "❌ 缺 secrets.CLOUDFLARE_ACCOUNT_ID"; exit 1; }
 
-      - name: 确保 KV 命名空间存在
-        working-directory: zai2api
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          if grep -q "REPLACE_WITH_KV_NAMESPACE_ID" wrangler.toml; then
-            echo "创建 KV 命名空间 ZAI_TOKENS..."
-            OUT=$(npx wrangler kv namespace create ZAI_TOKENS 2>&1 || true)
-            echo "$OUT"
-            ID=$(echo "$OUT" | grep -oP 'id\s*=\s*"\K[^"]+' | head -1)
-            [ -n "$ID" ] || { echo "❌ 无法从输出解析 KV id"; echo "$OUT"; exit 1; }
-            sed -i "s/REPLACE_WITH_KV_NAMESPACE_ID/$ID/" wrangler.toml
-            echo "✅ KV id = $ID, 已写入 wrangler.toml"
-          else
-            echo "KV id 已配置, 复用现有命名空间"
-          fi
-
       - name: 采集 deviceToken
         working-directory: zai2api
         run: |
@@ -85,6 +70,7 @@ jobs:
           npx wrangler kv bulk put --binding=ZAI_TOKENS tokens.json
           echo "✅ KV 灌池完成"
 
+      # KV 已固定写死在私库 wrangler.toml; 仅手动触发勾选 deploy 时重新部署
       - name: 部署 Worker
         if: ${{ inputs.deploy }}
         working-directory: zai2api
