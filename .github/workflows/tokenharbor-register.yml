@@ -158,11 +158,20 @@ jobs:
         env:
           PUBLISH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
         run: |
-          SRC="${{ env.PROJECT_DIR }}/apikey.txt"
+          AUTH_BASE="https://x-access-token:${PUBLISH_TOKEN}@github.com"
+          # 以私库远端最新为准(并行批次下本地快照可能落后)
+          rm -rf /tmp/th-src
+          if ! git clone --depth 1 "${AUTH_BASE}/${{ env.PRIVATE_REPO }}.git" /tmp/th-src >/dev/null 2>&1; then
+            echo "!! 克隆私库失败, 回退用本地快照"
+            rm -rf /tmp/th-src && mkdir -p /tmp/th-src
+            cp -f "${{ env.PROJECT_DIR }}/apikey.txt" /tmp/th-src/apikey.txt 2>/dev/null || true
+          fi
+          SRC="/tmp/th-src/apikey.txt"
           if [ ! -s "$SRC" ]; then
             echo "apikey.txt 为空, 跳过同步"
             exit 0
           fi
+          echo "私库 apikey 共 $(grep -c . "$SRC") 个"
           rm -rf /tmp/addapi-publish
           if ! git clone --depth 1 \
               "https://x-access-token:${PUBLISH_TOKEN}@github.com/${{ env.PUBLISH_REPO }}.git" \
