@@ -22,6 +22,9 @@ concurrency:
 env:
   PRIVATE_REPO: pingmike2/tokenharbor2api
   PROJECT_DIR: tokenharbor2api
+  # 额外同步目标: 供 Workers 变量用 raw 链接直接读取
+  PUBLISH_REPO: pingmike2/addapi
+  PUBLISH_PATH: tokenharbor2api/apikey.txt
 
 jobs:
   register:
@@ -149,6 +152,54 @@ jobs:
           done
           echo "✅ apikey 共 $(wc -l < apikey.txt) 个 (内容隐藏)"
           echo "✅ accounts 共 $(wc -l < accounts.txt) 个 (内容隐藏)"
+
+      - name: 同步 apikey.txt 到 addapi 私库(raw 链接用)
+        if: always()
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+        run: |
+          SRC="${{ env.PROJECT_DIR }}/apikey.txt"
+          if [ ! -s "$SRC" ]; then
+            echo "apikey.txt 为空, 跳过同步"
+            exit 0
+          fi
+          rm -rf /tmp/addapi-publish
+          if ! git clone --depth 1 \
+              "https://x-access-token:${PUBLISH_TOKEN}@github.com/${{ env.PUBLISH_REPO }}.git" \
+              /tmp/addapi-publish 2>&1; then
+            echo "!! 克隆 addapi 失败(检查 PRIVATE_REPO_TOKEN 权限), 跳过"
+            exit 0
+          fi
+          cd /tmp/addapi-publish
+          mkdir -p "$(dirname "${{ env.PUBLISH_PATH }}")"
+          # 目标文件 = 本地已有 ∪ 本次新 key, 去重排序
+          touch "${{ env.PUBLISH_PATH }}"
+          cat "${{ env.PUBLISH_PATH }}" "$SRC" | grep -v '^$' | sort -u -o "${{ env.PUBLISH_PATH }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ env.PUBLISH_PATH }}"
+          if git diff --cached --quiet; then
+            echo "✅ addapi 无变化(内容已是最新)"
+            exit 0
+          fi
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main 2>/dev/null || true
+            git reset --hard origin/main
+            mkdir -p "$(dirname "${{ env.PUBLISH_PATH }}")"
+            touch "${{ env.PUBLISH_PATH }}"
+            cat "${{ env.PUBLISH_PATH }}" "$SRC" | grep -v '^$' | sort -u -o "${{ env.PUBLISH_PATH }}"
+            git add "${{ env.PUBLISH_PATH }}"
+            git diff --cached --quiet && { echo "✅ addapi 无变化"; exit 0; }
+            git commit -q -m "chore: sync tokenharbor apikey.txt $(date +%Y-%m-%d)"
+            if git push origin HEAD:main 2>&1; then
+              echo "✅ 已同步到 ${{ env.PUBLISH_REPO }} (共 $(wc -l < "${{ env.PUBLISH_PATH }}") 个 key)"
+              exit 0
+            fi
+            echo "!! addapi 推送冲突, 重试 $attempt/5..."
+            sleep $(( attempt * 5 ))
+          done
+          echo "!! addapi 同步失败(不影响主流程)"
+          exit 0
 
       - name: 清理旧的工作流运行记录
         if: always()
