@@ -29,7 +29,7 @@
 #   - 步骤内容 → 私有库里的 hus-renew.py 是同一份，改脚本只需要改一处
 # =============================================================================
 
-name: 🔄 Hus506 Auto Renew ①-sharp
+name: 🔄 HusTT Auto Renew ①-sharp
 
 on:
   schedule:
